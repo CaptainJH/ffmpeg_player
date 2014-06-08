@@ -34,16 +34,24 @@ extern "C" {
 #include <mutex>
 #include <condition_variable>
 #include <deque>
+#include <chrono>
 
 std::mutex  g_mut;
 std::condition_variable g_newPktCondition;
 std::deque<AVPacket*> g_audioPkts;
+std::deque<AVPacket*> g_videoPkts;
 
 class MovieSound : public sf::SoundStream
 {
 public:
     MovieSound(AVFormatContext* ctx, int index);
     virtual ~MovieSound();
+    
+    
+    bool isAudioReady() const
+    {
+        return sf::SoundStream::getPlayingOffset() != initialTime;
+    }
     
 private:
     
@@ -68,6 +76,9 @@ private:
     int m_dstNbChannels;
     int m_dstLinesize;
     uint8_t** m_dstData;
+    
+    
+    sf::Time initialTime;
 };
 
 MovieSound::MovieSound(AVFormatContext* ctx, int index)
@@ -83,6 +94,8 @@ MovieSound::MovieSound(AVFormatContext* ctx, int index)
     initialize(av_get_channel_layout_nb_channels(AV_CH_LAYOUT_STEREO), m_sampleRate);
     
     initResampler();
+    
+    initialTime = sf::SoundStream::getPlayingOffset();
     
 }
 
@@ -207,18 +220,18 @@ int main(int, char const**)
     AVCodec         *paCodec = NULL;
     AVFrame         *pFrame = NULL;
     AVFrame         *pFrameRGB = NULL;
-    AVPacket        packet;
     int             frameFinished;
     int             numBytes;
     uint8_t         *buffer = NULL;
+    int64_t         m_lastDecodedTimeStamp = 0;
     
     AVDictionary    *optionsDict = NULL;
     AVDictionary    *optionsDictA = NULL;
     SwsContext      *sws_ctx = NULL;
     
     
-    const char* filename = "/Users/JHQ/Desktop/McChrystal.mp4";
-    //const char* filename = "/Users/JHQ/Downloads/bobb186.mp4/bobb186.mp4";
+    const char* filename = "/Users/JHQ/Desktop/Silicon_Valley.mkv";
+    //const char* filename = "/Users/JHQ/Downloads/(G-AREA)(467nana)¤Ê¤Ê.mkv";
     // Register all formats and codecs
     av_register_all();
     
@@ -309,8 +322,9 @@ int main(int, char const**)
     
     MovieSound sound(pFormatCtx, audioStream);
     sound.play();
-
-
+    
+    auto startPoint = std::chrono::system_clock::now();
+    
     // Start the game loop
     while (window.isOpen())
     {
@@ -331,57 +345,103 @@ int main(int, char const**)
             }
         }
         
-
-        if(av_read_frame(pFormatCtx, &packet) < 0)
+        auto timeNow = std::chrono::system_clock::now();
+        std::chrono::milliseconds timeElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(timeNow - startPoint);
+        
+        AVPacket* packet_ptr = (AVPacket*)av_malloc(sizeof(AVPacket));
+        av_init_packet(packet_ptr);
+        bool av_over = false;
+        if(av_read_frame(pFormatCtx, packet_ptr) < 0)
         {
-            break;
+            if(g_videoPkts.empty())
+                break;
+            else
+            {
+                av_free_packet(packet_ptr);
+                av_free(packet_ptr);
+                
+                packet_ptr = g_videoPkts.front();
+                av_over = true;
+            }
         }
         
+        AVPacket& packet = *packet_ptr;
         if(packet.stream_index == videoStream)
         {
-            avcodec_decode_video2(pCodecCtx, pFrame, &frameFinished, &packet);
+            if(!av_over)
+                g_videoPkts.push_back(packet_ptr);
             
-            if(frameFinished)
+            const auto pStream = pFormatCtx->streams[videoStream];
+            
+            if(timeElapsed.count() > m_lastDecodedTimeStamp && sound.isAudioReady())
             {
-                sws_scale(sws_ctx, (uint8_t const * const *)pFrame->data, pFrame->linesize, 0, pCodecCtx->height, pFrameRGB->data, pFrameRGB->linesize);
+                packet_ptr = g_videoPkts.front();
+                g_videoPkts.pop_front();
                 
-                for (int i = 0, j = 0; i < FrameSize; i += 3, j += 4)
+                auto decodedLength = avcodec_decode_video2(pCodecCtx, pFrame, &frameFinished, packet_ptr);
+                
+                if(frameFinished)
                 {
-                    Data[j + 0] = pFrameRGB->data[0][i + 0];
-                    Data[j + 1] = pFrameRGB->data[0][i + 1];
-                    Data[j + 2] = pFrameRGB->data[0][i + 2];
-                    Data[j + 3] = 255;
+                    sws_scale(sws_ctx, (uint8_t const * const *)pFrame->data, pFrame->linesize, 0, pCodecCtx->height, pFrameRGB->data, pFrameRGB->linesize);
+                    
+                    for (int i = 0, j = 0; i < FrameSize; i += 3, j += 4)
+                    {
+                        Data[j + 0] = pFrameRGB->data[0][i + 0];
+                        Data[j + 1] = pFrameRGB->data[0][i + 1];
+                        Data[j + 2] = pFrameRGB->data[0][i + 2];
+                        Data[j + 3] = 255;
+                    }
+                    
+                    im_video.update(Data);
+                    
+                    // Clear screen
+                    window.clear();
+                    
+                    window.draw(sprite);
+                    window.draw(text);
+                    
+                    window.display();
+                    
+                    int64_t timestamp = av_frame_get_best_effort_timestamp(pFrame);
+                    int64_t startTime = pStream->start_time != AV_NOPTS_VALUE ? pStream->start_time : 0;
+                    int64_t ms = 1000 * (timestamp - startTime) * av_q2d(pStream->time_base);
+                    m_lastDecodedTimeStamp = ms;
+                    
                 }
                 
-                im_video.update(Data);
-                
-                // Clear screen
-                window.clear();
-                
-                window.draw(sprite);
-                window.draw(text);
-                
-                window.display();
-                
+                if(decodedLength < packet_ptr->size)
+                {
+                    packet_ptr->data += decodedLength;
+                    packet_ptr->size -= decodedLength;
+                    
+                    g_videoPkts.push_front(packet_ptr);
+                }
+                else
+                {
+                    av_free_packet(packet_ptr);
+                    av_free(packet_ptr);
+                }
             }
         }
         else if(packet.stream_index == audioStream)
         {
-            AVPacket* pkt = (AVPacket*)av_malloc(sizeof(AVPacket));
-            std::memcpy(pkt, &packet, sizeof(AVPacket));
+            AVPacket* pkt = packet_ptr;
             
             std::lock_guard<std::mutex> lk(g_mut);
             g_audioPkts.push_back(pkt);
             g_newPktCondition.notify_one();
-            
         }
-        else
+        
+        
+        if(packet.stream_index == videoStream)
         {
-            av_free_packet(&packet);
+            //av_free_packet(packet_ptr);
+            //av_free(packet_ptr);
         }
         
     }
     
+    sws_freeContext(sws_ctx);
     av_free(buffer);
     av_free(pFrameRGB);
     av_free(pFrame);
