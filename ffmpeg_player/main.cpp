@@ -53,6 +53,11 @@ public:
         return sf::SoundStream::getPlayingOffset() != initialTime;
     }
     
+    sf::Int32 timeElapsed() const
+    {
+        return sf::SoundStream::getPlayingOffset().asMilliseconds();
+    }
+    
 private:
     
     virtual bool onGetData(Chunk& data);
@@ -323,8 +328,6 @@ int main(int, char const**)
     MovieSound sound(pFormatCtx, audioStream);
     sound.play();
     
-    auto startPoint = std::chrono::system_clock::now();
-    
     // Start the game loop
     while (window.isOpen())
     {
@@ -344,9 +347,6 @@ int main(int, char const**)
                 window.close();
             }
         }
-        
-        auto timeNow = std::chrono::system_clock::now();
-        std::chrono::milliseconds timeElapsed = std::chrono::duration_cast<std::chrono::milliseconds>(timeNow - startPoint);
         
         AVPacket* packet_ptr = (AVPacket*)av_malloc(sizeof(AVPacket));
         av_init_packet(packet_ptr);
@@ -373,7 +373,7 @@ int main(int, char const**)
             
             const auto pStream = pFormatCtx->streams[videoStream];
             
-            if(timeElapsed.count() > m_lastDecodedTimeStamp && sound.isAudioReady())
+            if(sound.timeElapsed() > m_lastDecodedTimeStamp && sound.isAudioReady())
             {
                 packet_ptr = g_videoPkts.front();
                 g_videoPkts.pop_front();
@@ -430,13 +430,6 @@ int main(int, char const**)
             std::lock_guard<std::mutex> lk(g_mut);
             g_audioPkts.push_back(pkt);
             g_newPktCondition.notify_one();
-        }
-        
-        
-        if(packet.stream_index == videoStream)
-        {
-            //av_free_packet(packet_ptr);
-            //av_free(packet_ptr);
         }
         
     }
