@@ -234,6 +234,8 @@ int main(int, char const**)
     AVDictionary    *optionsDictA = NULL;
     SwsContext      *sws_ctx = NULL;
     
+    AVPacket        flushPkt;
+    
     
     const char* filename = "/Users/JHQ/Desktop/Silicon_Valley.mkv";
     //const char* filename = "/Users/JHQ/Downloads/(G-AREA)(467nana)¤Ê¤Ê.mkv";
@@ -345,6 +347,24 @@ int main(int, char const**)
             if (event.type == sf::Event::KeyPressed && event.key.code == sf::Keyboard::Escape)
             {
                 window.close();
+            }
+            else if(event.type == sf::Event::KeyPressed && event.key.code == sf::Keyboard::Right)
+            {
+                av_init_packet(&flushPkt);
+                flushPkt.data = (unsigned char*)"FLUSH";
+                
+                g_videoPkts.clear();
+                avcodec_flush_buffers(pCodecCtx);
+                
+                
+                
+                auto now = sound.timeElapsed();
+                int64_t seekTarget = now / 1000 + 10;
+                seekTarget = av_rescale_q(seekTarget, AV_TIME_BASE_Q, pFormatCtx->streams[videoStream]->time_base);
+                
+                av_seek_frame(pFormatCtx, videoStream, seekTarget, 0);
+                
+                
             }
         }
         
