@@ -64,7 +64,7 @@ public:
 private:
     
     virtual bool onGetData(Chunk& data);
-    virtual void onSeek(sf::Time timeOffset){}
+    virtual void onSeek(sf::Time timeOffset);
     
     bool decodePacket(AVPacket* packet, AVFrame* outputFrame, bool& gotFrame);
     void initResampler();
@@ -219,6 +219,14 @@ bool MovieSound::onGetData(sf::SoundStream::Chunk &data)
     return true;
 }
 
+void MovieSound::onSeek(sf::Time timeOffset)
+{
+    std::lock_guard<std::mutex> lk(g_mut);
+    g_audioPkts.clear();
+    g_newPktCondition.notify_one();
+}
+
+
 int main(int, char const**)
 {
     AVFormatContext *pFormatCtx = NULL;
@@ -236,7 +244,7 @@ int main(int, char const**)
     AVDictionary    *optionsDict = NULL;
     AVDictionary    *optionsDictA = NULL;
     SwsContext      *sws_ctx = NULL;
-        
+    
     
     const char* filename = "/Users/JHQ/Desktop/Silicon_Valley.mkv";
     //const char* filename = "/Users/JHQ/Downloads/(G-AREA)(467nana)¤Ê¤Ê.mkv";
@@ -354,28 +362,34 @@ int main(int, char const**)
                 g_videoPkts.clear();
                 
                 auto now = sound.timeElapsed();
-                int64_t seekTarget = now / 1000 + 10;
-                seekTarget *= AV_TIME_BASE;
+                auto next = now / 1000 + 10;
+                int64_t seekTarget = next * AV_TIME_BASE;
                 seekTarget = av_rescale_q(seekTarget, AV_TIME_BASE_Q, pFormatCtx->streams[videoStream]->time_base);
                 
                 av_seek_frame(pFormatCtx, videoStream, seekTarget, 0);
                 
                 avcodec_flush_buffers(pCodecCtx);
-                
+
+                av_seek_frame(pFormatCtx, audioStream, seekTarget, 0);
+                avcodec_flush_buffers(paCodecCtx);
+                sound.setPlayingOffset(sf::seconds(next));
             }
             else if(event.type == sf::Event::KeyPressed && event.key.code == sf::Keyboard::Left)
             {
                 g_videoPkts.clear();
                 
                 auto now = sound.timeElapsed();
-                int64_t seekTarget = std::max(0, now / 1000 - 10);
-                seekTarget *= AV_TIME_BASE;
+                auto prev = std::max(0, now / 1000 - 10);
+                int64_t seekTarget = prev * AV_TIME_BASE;
                 seekTarget = av_rescale_q(seekTarget, AV_TIME_BASE_Q, pFormatCtx->streams[videoStream]->time_base);
                 
                 av_seek_frame(pFormatCtx, videoStream, seekTarget, AVSEEK_FLAG_BACKWARD);
                 
                 avcodec_flush_buffers(pCodecCtx);
     
+                av_seek_frame(pFormatCtx, audioStream, seekTarget, AVSEEK_FLAG_BACKWARD);
+                avcodec_flush_buffers(paCodecCtx);
+                sound.setPlayingOffset(sf::seconds(prev));
             }
         }
         
