@@ -35,6 +35,9 @@ extern "C" {
 #include <condition_variable>
 #include <deque>
 #include <chrono>
+#include <algorithm>
+
+#include <iostream>
 
 std::mutex  g_mut;
 std::condition_variable g_newPktCondition;
@@ -233,9 +236,7 @@ int main(int, char const**)
     AVDictionary    *optionsDict = NULL;
     AVDictionary    *optionsDictA = NULL;
     SwsContext      *sws_ctx = NULL;
-    
-    AVPacket        flushPkt;
-    
+        
     
     const char* filename = "/Users/JHQ/Desktop/Silicon_Valley.mkv";
     //const char* filename = "/Users/JHQ/Downloads/(G-AREA)(467nana)¤Ê¤Ê.mkv";
@@ -350,21 +351,31 @@ int main(int, char const**)
             }
             else if(event.type == sf::Event::KeyPressed && event.key.code == sf::Keyboard::Right)
             {
-                av_init_packet(&flushPkt);
-                flushPkt.data = (unsigned char*)"FLUSH";
-                
                 g_videoPkts.clear();
-                avcodec_flush_buffers(pCodecCtx);
-                
-                
                 
                 auto now = sound.timeElapsed();
                 int64_t seekTarget = now / 1000 + 10;
+                seekTarget *= AV_TIME_BASE;
                 seekTarget = av_rescale_q(seekTarget, AV_TIME_BASE_Q, pFormatCtx->streams[videoStream]->time_base);
                 
                 av_seek_frame(pFormatCtx, videoStream, seekTarget, 0);
                 
+                avcodec_flush_buffers(pCodecCtx);
                 
+            }
+            else if(event.type == sf::Event::KeyPressed && event.key.code == sf::Keyboard::Left)
+            {
+                g_videoPkts.clear();
+                
+                auto now = sound.timeElapsed();
+                int64_t seekTarget = std::max(0, now / 1000 - 10);
+                seekTarget *= AV_TIME_BASE;
+                seekTarget = av_rescale_q(seekTarget, AV_TIME_BASE_Q, pFormatCtx->streams[videoStream]->time_base);
+                
+                av_seek_frame(pFormatCtx, videoStream, seekTarget, AVSEEK_FLAG_BACKWARD);
+                
+                avcodec_flush_buffers(pCodecCtx);
+    
             }
         }
         
