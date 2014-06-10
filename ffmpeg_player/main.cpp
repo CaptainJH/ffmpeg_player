@@ -361,9 +361,11 @@ int main(int, char const**)
             {
                 g_videoPkts.clear();
                 
+                const auto TimeBase = pFormatCtx->streams[videoStream]->time_base.den;
+                
                 auto now = sound.timeElapsed();
-                auto next = now / 1000 + 10;
-                int64_t seekTarget = next * AV_TIME_BASE;
+                auto next = now + 10 * TimeBase; // in ms
+                int64_t seekTarget = (next / (float)TimeBase) * AV_TIME_BASE;
                 seekTarget = av_rescale_q(seekTarget, AV_TIME_BASE_Q, pFormatCtx->streams[videoStream]->time_base);
                 
                 av_seek_frame(pFormatCtx, videoStream, seekTarget, 0);
@@ -372,15 +374,17 @@ int main(int, char const**)
 
                 av_seek_frame(pFormatCtx, audioStream, seekTarget, 0);
                 avcodec_flush_buffers(paCodecCtx);
-                sound.setPlayingOffset(sf::seconds(next));
+                sound.setPlayingOffset(sf::milliseconds(next));
             }
             else if(event.type == sf::Event::KeyPressed && event.key.code == sf::Keyboard::Left)
             {
                 g_videoPkts.clear();
                 
+                const auto TimeBase = pFormatCtx->streams[videoStream]->time_base.den;
+                
                 auto now = sound.timeElapsed();
-                auto prev = std::max(0, now / 1000 - 10);
-                int64_t seekTarget = prev * AV_TIME_BASE;
+                auto prev = std::max(0, now - 10 * TimeBase);
+                int64_t seekTarget = (prev / (float)TimeBase) * AV_TIME_BASE;
                 seekTarget = av_rescale_q(seekTarget, AV_TIME_BASE_Q, pFormatCtx->streams[videoStream]->time_base);
                 
                 av_seek_frame(pFormatCtx, videoStream, seekTarget, AVSEEK_FLAG_BACKWARD);
@@ -389,7 +393,7 @@ int main(int, char const**)
     
                 av_seek_frame(pFormatCtx, audioStream, seekTarget, AVSEEK_FLAG_BACKWARD);
                 avcodec_flush_buffers(paCodecCtx);
-                sound.setPlayingOffset(sf::seconds(prev));
+                sound.setPlayingOffset(sf::milliseconds(prev));
             }
         }
         
