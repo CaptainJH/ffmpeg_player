@@ -36,6 +36,7 @@ extern "C" {
 #include <deque>
 #include <chrono>
 #include <algorithm>
+#include <assert.h>
 
 #include <iostream>
 
@@ -222,8 +223,14 @@ bool MovieSound::onGetData(sf::SoundStream::Chunk &data)
 void MovieSound::onSeek(sf::Time timeOffset)
 {
     std::lock_guard<std::mutex> lk(g_mut);
+    for (auto p : g_audioPkts)
+    {
+        av_free_packet(p);
+        av_free(p);
+    }
     g_audioPkts.clear();
-    g_newPktCondition.notify_one();
+    avcodec_flush_buffers(m_codecCtx);
+    //g_newPktCondition.notify_one();
 }
 
 
@@ -247,7 +254,8 @@ int main(int, char const**)
     
     
     const char* filename = "/Users/JHQ/Desktop/Silicon_Valley.mkv";
-    //const char* filename = "/Users/JHQ/Downloads/(G-AREA)(467nana)¤Ê¤Ê.mkv";
+    //const char* filename = "/Users/JHQ/Downloads/bobb186.mp4/bobb186.mp4";
+    //const char* filename = "/Users/JHQ/Downloads/BF-307.avi";
     // Register all formats and codecs
     av_register_all();
     
@@ -337,6 +345,8 @@ int main(int, char const**)
     text.setColor(sf::Color::Black);
     
     MovieSound sound(pFormatCtx, audioStream);
+    //MovieSound* psound = new MovieSound(pFormatCtx, audioStream);
+    //MovieSound& soun
     sound.play();
     
     // Start the game loop
@@ -359,22 +369,34 @@ int main(int, char const**)
             }
             else if(event.type == sf::Event::KeyPressed && event.key.code == sf::Keyboard::Right)
             {
+                for(auto p : g_videoPkts)
+                {
+                    av_free_packet(p);
+                    av_free(p);
+                }
                 g_videoPkts.clear();
                 
                 const auto TimeBase = pFormatCtx->streams[videoStream]->time_base.den;
+                const auto TimeBaseA = pFormatCtx->streams[audioStream]->time_base.den;
                 
                 auto now = sound.timeElapsed();
-                auto next = now + 10 * TimeBase; // in ms
-                int64_t seekTarget = (next / (float)TimeBase) * AV_TIME_BASE;
-                seekTarget = av_rescale_q(seekTarget, AV_TIME_BASE_Q, pFormatCtx->streams[videoStream]->time_base);
+                auto next = now + 10 * TimeBaseA; // in ms
+                int64_t seekTarget = (next / (float)TimeBaseA) * AV_TIME_BASE;
                 
-                av_seek_frame(pFormatCtx, videoStream, seekTarget, 0);
+                seekTarget = av_rescale_q(seekTarget, AV_TIME_BASE_Q, pFormatCtx->streams[audioStream]->time_base);
                 
+                const auto OriginSeekTarget = seekTarget;
+                
+                //av_seek_frame(pFormatCtx, videoStream, seekTarget, 0);
+                auto ret = avformat_seek_file(pFormatCtx, videoStream, 0, seekTarget, seekTarget, AVSEEK_FLAG_BACKWARD);
+                assert(ret >= 0);
                 avcodec_flush_buffers(pCodecCtx);
 
-                av_seek_frame(pFormatCtx, audioStream, seekTarget, 0);
-                avcodec_flush_buffers(paCodecCtx);
+                //av_seek_frame(pFormatCtx, audioStream, seekTarget, AVSEEK_FLAG_BACKWARD | AVSEEK_FLAG_ANY);
+                //avcodec_flush_buffers(paCodecCtx);
                 sound.setPlayingOffset(sf::milliseconds(next));
+                
+                
             }
             else if(event.type == sf::Event::KeyPressed && event.key.code == sf::Keyboard::Left)
             {
@@ -397,88 +419,110 @@ int main(int, char const**)
             }
         }
         
-        AVPacket* packet_ptr = (AVPacket*)av_malloc(sizeof(AVPacket));
-        av_init_packet(packet_ptr);
-        bool av_over = false;
-        if(av_read_frame(pFormatCtx, packet_ptr) < 0)
-        {
-            if(g_videoPkts.empty())
-                break;
-            else
-            {
-                av_free_packet(packet_ptr);
-                av_free(packet_ptr);
-                
-                packet_ptr = g_videoPkts.front();
-                av_over = true;
-            }
-        }
+        AVPacket* packet_ptr = 0;
         
-        AVPacket& packet = *packet_ptr;
-        if(packet.stream_index == videoStream)
+        if(g_videoPkts.size() < 300)
         {
-            if(!av_over)
-                g_videoPkts.push_back(packet_ptr);
+            packet_ptr = (AVPacket*)av_malloc(sizeof(AVPacket));
+            av_init_packet(packet_ptr);
             
-            const auto pStream = pFormatCtx->streams[videoStream];
-            
-            if(sound.timeElapsed() > m_lastDecodedTimeStamp && sound.isAudioReady())
+            if(av_read_frame(pFormatCtx, packet_ptr) < 0)
             {
-                packet_ptr = g_videoPkts.front();
-                g_videoPkts.pop_front();
-                
-                auto decodedLength = avcodec_decode_video2(pCodecCtx, pFrame, &frameFinished, packet_ptr);
-                
-                if(frameFinished)
+                if(g_videoPkts.empty() || g_audioPkts.empty())
                 {
-                    sws_scale(sws_ctx, (uint8_t const * const *)pFrame->data, pFrame->linesize, 0, pCodecCtx->height, pFrameRGB->data, pFrameRGB->linesize);
-                    
-                    for (int i = 0, j = 0; i < FrameSize; i += 3, j += 4)
+                    for(auto p : g_videoPkts)
                     {
-                        Data[j + 0] = pFrameRGB->data[0][i + 0];
-                        Data[j + 1] = pFrameRGB->data[0][i + 1];
-                        Data[j + 2] = pFrameRGB->data[0][i + 2];
-                        Data[j + 3] = 255;
+                        av_free_packet(p);
+                        av_free(p);
                     }
                     
-                    im_video.update(Data);
+                    for(auto p : g_audioPkts)
+                    {
+                        av_free_packet(p);
+                        av_free(p);
+                    }
                     
-                    // Clear screen
-                    window.clear();
-                    
-                    window.draw(sprite);
-                    window.draw(text);
-                    
-                    window.display();
-                    
-                    int64_t timestamp = av_frame_get_best_effort_timestamp(pFrame);
-                    int64_t startTime = pStream->start_time != AV_NOPTS_VALUE ? pStream->start_time : 0;
-                    int64_t ms = 1000 * (timestamp - startTime) * av_q2d(pStream->time_base);
-                    m_lastDecodedTimeStamp = ms;
-                    
-                }
-                
-                if(decodedLength < packet_ptr->size)
-                {
-                    packet_ptr->data += decodedLength;
-                    packet_ptr->size -= decodedLength;
-                    
-                    g_videoPkts.push_front(packet_ptr);
+                    break;
                 }
                 else
                 {
                     av_free_packet(packet_ptr);
                     av_free(packet_ptr);
+                    
+                    packet_ptr = 0;
+                }
+            }
+            
+            if(packet_ptr)
+            {
+                AVPacket& packet = *packet_ptr;
+                if(packet.stream_index == videoStream)
+                {
+                    g_videoPkts.push_back(packet_ptr);
+                }
+                else if(packet.stream_index == audioStream)
+                {
+                    AVPacket* pkt = packet_ptr;
+                    
+                    std::lock_guard<std::mutex> lk(g_mut);
+                    g_audioPkts.push_back(pkt);
+                    g_newPktCondition.notify_one();
                 }
             }
         }
-        else if(packet.stream_index == audioStream)
+        
+        const auto pStream = pFormatCtx->streams[videoStream];
+        
+        if(sound.timeElapsed() > m_lastDecodedTimeStamp && sound.isAudioReady() && !g_videoPkts.empty())
         {
-            AVPacket* pkt = packet_ptr;
+            packet_ptr = g_videoPkts.front();
+            g_videoPkts.pop_front();
             
-            std::lock_guard<std::mutex> lk(g_mut);
-            g_audioPkts.push_back(pkt);
-            g_newPktCondition.notify_one();
+            auto decodedLength = avcodec_decode_video2(pCodecCtx, pFrame, &frameFinished, packet_ptr);
+            
+            if(frameFinished)
+            {
+                sws_scale(sws_ctx, (uint8_t const * const *)pFrame->data, pFrame->linesize, 0, pCodecCtx->height, pFrameRGB->data, pFrameRGB->linesize);
+                
+                for (int i = 0, j = 0; i < FrameSize; i += 3, j += 4)
+                {
+                    Data[j + 0] = pFrameRGB->data[0][i + 0];
+                    Data[j + 1] = pFrameRGB->data[0][i + 1];
+                    Data[j + 2] = pFrameRGB->data[0][i + 2];
+                    Data[j + 3] = 255;
+                }
+                
+                im_video.update(Data);
+                
+                // Clear screen
+                window.clear();
+                
+                window.draw(sprite);
+                window.draw(text);
+                
+                window.display();
+                
+                int64_t timestamp = av_frame_get_best_effort_timestamp(pFrame);
+                int64_t startTime = pStream->start_time != AV_NOPTS_VALUE ? pStream->start_time : 0;
+                int64_t ms = 1000 * (timestamp - startTime) * av_q2d(pStream->time_base);
+                m_lastDecodedTimeStamp = ms;
+                
+                //std::cout << "==============\n" << "pts: " << pts << "\nTimestamp: " << ms << std::endl;
+                
+            }
+            
+            if(decodedLength < packet_ptr->size)
+            {
+                packet_ptr->data += decodedLength;
+                packet_ptr->size -= decodedLength;
+                
+                g_videoPkts.push_front(packet_ptr);
+            }
+            else
+            {
+                av_free_packet(packet_ptr);
+                av_free(packet_ptr);
+            }
         }
         
     }
@@ -488,6 +532,7 @@ int main(int, char const**)
     av_free(pFrameRGB);
     av_free(pFrame);
     avcodec_close(pCodecCtx);
+    avcodec_close(paCodecCtx);
     avformat_close_input(&pFormatCtx);
     
     delete [] Data;
