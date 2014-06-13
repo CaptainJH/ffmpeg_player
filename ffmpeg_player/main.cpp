@@ -39,6 +39,7 @@ extern "C" {
 #include <assert.h>
 
 #include <iostream>
+#include <fstream>
 
 std::mutex  g_mut;
 std::condition_variable g_newPktCondition;
@@ -252,6 +253,10 @@ int main(int, char const**)
     AVDictionary    *optionsDictA = NULL;
     SwsContext      *sws_ctx = NULL;
     
+    std::ofstream of("outputframe.txt");
+    bool syncAV = false;
+    int64_t blockPts = 0;
+    std::vector<AVPacket*> audioSyncBuffer;
     
     const char* filename = "/Users/JHQ/Desktop/Silicon_Valley.mkv";
     //const char* filename = "/Users/JHQ/Downloads/bobb186.mp4/bobb186.mp4";
@@ -385,8 +390,6 @@ int main(int, char const**)
                 
                 seekTarget = av_rescale_q(seekTarget, AV_TIME_BASE_Q, pFormatCtx->streams[audioStream]->time_base);
                 
-                const auto OriginSeekTarget = seekTarget;
-                
                 //av_seek_frame(pFormatCtx, videoStream, seekTarget, 0);
                 auto ret = avformat_seek_file(pFormatCtx, videoStream, 0, seekTarget, seekTarget, AVSEEK_FLAG_BACKWARD);
                 assert(ret >= 0);
@@ -394,9 +397,11 @@ int main(int, char const**)
 
                 //av_seek_frame(pFormatCtx, audioStream, seekTarget, AVSEEK_FLAG_BACKWARD | AVSEEK_FLAG_ANY);
                 //avcodec_flush_buffers(paCodecCtx);
-                sound.setPlayingOffset(sf::milliseconds(next));
+                //sound.setPlayingOffset(sf::milliseconds(next));
+                //sound.stop();
+                syncAV = true;
                 
-                
+                of << "seek target : " << next << std::endl;
             }
             else if(event.type == sf::Event::KeyPressed && event.key.code == sf::Keyboard::Left)
             {
@@ -409,13 +414,12 @@ int main(int, char const**)
                 int64_t seekTarget = (prev / (float)TimeBase) * AV_TIME_BASE;
                 seekTarget = av_rescale_q(seekTarget, AV_TIME_BASE_Q, pFormatCtx->streams[videoStream]->time_base);
                 
-                av_seek_frame(pFormatCtx, videoStream, seekTarget, AVSEEK_FLAG_BACKWARD);
-                
+                auto ret = avformat_seek_file(pFormatCtx, videoStream, 0, seekTarget, seekTarget, AVSEEK_FLAG_BACKWARD);
+                assert(ret >= 0);
                 avcodec_flush_buffers(pCodecCtx);
-    
-                av_seek_frame(pFormatCtx, audioStream, seekTarget, AVSEEK_FLAG_BACKWARD);
-                avcodec_flush_buffers(paCodecCtx);
-                sound.setPlayingOffset(sf::milliseconds(prev));
+                
+                syncAV = true;
+                of << "seek target : " << prev << std::endl;
             }
         }
         
@@ -458,21 +462,47 @@ int main(int, char const**)
                 AVPacket& packet = *packet_ptr;
                 if(packet.stream_index == videoStream)
                 {
+                    //of << "new video pkt\n";
                     g_videoPkts.push_back(packet_ptr);
                 }
                 else if(packet.stream_index == audioStream)
                 {
                     AVPacket* pkt = packet_ptr;
+                 
+                    if(packet_ptr->pts >= blockPts && !syncAV)
+                    {
+                        std::lock_guard<std::mutex> lk(g_mut);
+                        for(auto p : audioSyncBuffer)
+                        {
+                            if(p->pts >= blockPts)
+                            {
+                                g_audioPkts.push_back(p);
+                            }
+                            else
+                            {
+                                av_free_packet(p);
+                                av_free(p);
+                            }
+                        }
+                        g_audioPkts.push_back(packet_ptr);
+                        g_newPktCondition.notify_one();
+                        
+                        audioSyncBuffer.clear();
+                    }
                     
-                    std::lock_guard<std::mutex> lk(g_mut);
-                    g_audioPkts.push_back(pkt);
-                    g_newPktCondition.notify_one();
+                    if(syncAV)
+                    {
+                        audioSyncBuffer.push_back(packet_ptr);
+                    }
+                    
+                    //of << "new audio pkt\n";
                 }
             }
         }
         
         const auto pStream = pFormatCtx->streams[videoStream];
         
+        //of << "sound : " << sound.timeElapsed() << std::endl;
         if(sound.timeElapsed() > m_lastDecodedTimeStamp && sound.isAudioReady() && !g_videoPkts.empty())
         {
             packet_ptr = g_videoPkts.front();
@@ -507,7 +537,13 @@ int main(int, char const**)
                 int64_t ms = 1000 * (timestamp - startTime) * av_q2d(pStream->time_base);
                 m_lastDecodedTimeStamp = ms;
                 
-                //std::cout << "==============\n" << "pts: " << pts << "\nTimestamp: " << ms << std::endl;
+                if(syncAV)
+                {
+                    blockPts = (ms + 31) / 32 * 32;
+                    sound.setPlayingOffset(sf::milliseconds(blockPts));
+                    
+                    syncAV = false;
+                }
                 
             }
             
@@ -526,6 +562,8 @@ int main(int, char const**)
         }
         
     }
+    
+    of.close();
     
     sws_freeContext(sws_ctx);
     av_free(buffer);
