@@ -258,9 +258,9 @@ int main(int, char const**)
     int64_t blockPts = 0;
     std::vector<AVPacket*> audioSyncBuffer;
     
-    const char* filename = "/Users/JHQ/Desktop/Silicon_Valley.mkv";
+    //const char* filename = "/Users/JHQ/Desktop/Silicon_Valley.mkv";
     //const char* filename = "/Users/JHQ/Downloads/bobb186.mp4/bobb186.mp4";
-    //const char* filename = "/Users/JHQ/Downloads/BF-307.avi";
+    const char* filename = "/Users/JHQ/Downloads/t_callofdutyaw_reveal_1280x720_3500_h32.mp4";
     // Register all formats and codecs
     av_register_all();
     
@@ -288,6 +288,9 @@ int main(int, char const**)
             audioStream = i;
         }
     }
+    
+    if(videoStream < 0)
+        return -1;
     
     if(videoStream >= 0)
     {
@@ -381,8 +384,8 @@ int main(int, char const**)
                 }
                 g_videoPkts.clear();
                 
-                const auto TimeBase = pFormatCtx->streams[videoStream]->time_base.den;
-                const auto TimeBaseA = pFormatCtx->streams[audioStream]->time_base.den;
+                const auto& TimeBase = pFormatCtx->streams[videoStream]->time_base.den;
+                const auto& TimeBaseA = pFormatCtx->streams[audioStream]->time_base.den;
                 
                 auto now = sound.timeElapsed();
                 auto next = now + 10 * TimeBaseA; // in ms
@@ -425,7 +428,7 @@ int main(int, char const**)
         
         AVPacket* packet_ptr = 0;
         
-        if(g_videoPkts.size() < 300)
+        if(g_videoPkts.size() < 150)
         {
             packet_ptr = (AVPacket*)av_malloc(sizeof(AVPacket));
             av_init_packet(packet_ptr);
@@ -467,8 +470,6 @@ int main(int, char const**)
                 }
                 else if(packet.stream_index == audioStream)
                 {
-                    AVPacket* pkt = packet_ptr;
-                 
                     if(packet_ptr->pts >= blockPts && !syncAV)
                     {
                         std::lock_guard<std::mutex> lk(g_mut);
