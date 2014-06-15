@@ -195,7 +195,7 @@ bool MovieSound::onGetData(sf::SoundStream::Chunk &data)
         
         AVPacket* packet = g_audioPkts.front();
         g_audioPkts.pop_front();
-        lk.unlock();
+        //lk.unlock();
         
         do {
             needsMoreDecoding = decodePacket(packet, m_audioFrame, gotFrame);
@@ -213,6 +213,8 @@ bool MovieSound::onGetData(sf::SoundStream::Chunk &data)
             }
             
         }while (needsMoreDecoding);
+        
+        lk.unlock();
         
         av_free_packet(packet);
         av_free(packet);
@@ -259,8 +261,9 @@ int main(int, char const**)
     std::vector<AVPacket*> audioSyncBuffer;
     
     //const char* filename = "/Users/JHQ/Desktop/Silicon_Valley.mkv";
-    //const char* filename = "/Users/JHQ/Downloads/bobb186.mp4/bobb186.mp4";
-    const char* filename = "/Users/JHQ/Downloads/t_callofdutyaw_reveal_1280x720_3500_h32.mp4";
+    const char* filename = "/Users/JHQ/Downloads/Soshite.Chichi.ni.Naru.2013.BluRay.iPad.720p.AAC.x264-YYeTs.mp4";
+    //const char* filename = "/Users/JHQ/Downloads/t_callofdutyaw_reveal_1280x720_3500_h32.mp4";
+    //const char* filename = "/Volumes/JuHeQi/iTunes/iTunes Media/Movies/Newsroom/新闻编辑室.The.Newsroom.S01E01.Chi_Eng.HR-HDTV.AC3.1024X576.x264-YYeTs人人影视.mkv";
     // Register all formats and codecs
     av_register_all();
     
@@ -384,37 +387,32 @@ int main(int, char const**)
                 }
                 g_videoPkts.clear();
                 
-                const auto& TimeBase = pFormatCtx->streams[videoStream]->time_base.den;
-                const auto& TimeBaseA = pFormatCtx->streams[audioStream]->time_base.den;
-                
                 auto now = sound.timeElapsed();
-                auto next = now + 10 * TimeBaseA; // in ms
-                int64_t seekTarget = (next / (float)TimeBaseA) * AV_TIME_BASE;
+                auto next = ( now / 1000.0f + 10 ) * AV_TIME_BASE;
+                int64_t seekTarget = next;
                 
-                seekTarget = av_rescale_q(seekTarget, AV_TIME_BASE_Q, pFormatCtx->streams[audioStream]->time_base);
+                seekTarget = av_rescale_q(seekTarget, AV_TIME_BASE_Q, pFormatCtx->streams[videoStream]->time_base);
                 
-                //av_seek_frame(pFormatCtx, videoStream, seekTarget, 0);
                 auto ret = avformat_seek_file(pFormatCtx, videoStream, 0, seekTarget, seekTarget, AVSEEK_FLAG_BACKWARD);
                 assert(ret >= 0);
                 avcodec_flush_buffers(pCodecCtx);
 
-                //av_seek_frame(pFormatCtx, audioStream, seekTarget, AVSEEK_FLAG_BACKWARD | AVSEEK_FLAG_ANY);
-                //avcodec_flush_buffers(paCodecCtx);
-                //sound.setPlayingOffset(sf::milliseconds(next));
-                //sound.stop();
                 syncAV = true;
                 
                 of << "seek target : " << next << std::endl;
             }
             else if(event.type == sf::Event::KeyPressed && event.key.code == sf::Keyboard::Left)
             {
+                for(auto p : g_videoPkts)
+                {
+                    av_free_packet(p);
+                    av_free(p);
+                }
                 g_videoPkts.clear();
                 
-                const auto TimeBase = pFormatCtx->streams[videoStream]->time_base.den;
-                
                 auto now = sound.timeElapsed();
-                auto prev = std::max(0, now - 10 * TimeBase);
-                int64_t seekTarget = (prev / (float)TimeBase) * AV_TIME_BASE;
+                auto prev = std::max(0, now - 10 * 1000);
+                int64_t seekTarget = (prev / 1000) * AV_TIME_BASE;
                 seekTarget = av_rescale_q(seekTarget, AV_TIME_BASE_Q, pFormatCtx->streams[videoStream]->time_base);
                 
                 auto ret = avformat_seek_file(pFormatCtx, videoStream, 0, seekTarget, seekTarget, AVSEEK_FLAG_BACKWARD);
@@ -540,7 +538,7 @@ int main(int, char const**)
                 
                 if(syncAV)
                 {
-                    blockPts = (ms + 31) / 32 * 32;
+                    blockPts = ms;
                     sound.setPlayingOffset(sf::milliseconds(blockPts));
                     
                     syncAV = false;
